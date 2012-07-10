@@ -1,0 +1,108 @@
+
+
+#!/usr/bin/env bash
+
+BUILD_DIR=$1
+CACHE_DIR=$2
+BRIDGE_HOME=$BUILD_DIR/.bridge
+
+ARCH=`uname -m`
+BRIDGE_URL="https://github.com/getbridge/bridge-server/tarball"
+RABBIT_URL="https://github.com/downloads/getbridge/bridge-server/rabbitmq-server-2.8.1u."
+POST_INSTALL_URL="https://raw.github.com/gist/09ed552955d6deedd2be"
+
+GET_TO_IT=""
+
+if [ -z "${PS1}" ]; then
+    GET_TO_IT="1"
+fi
+
+GOT_RABBIT=""
+
+BIN_DIR=${BRIDGE_HOME}/bridge-server/bc-latest/bin
+
+err() {
+    echo "$@" 1>&2
+    exit 1
+}
+
+if [[ -n "`uname -m | grep -P '^i.86$'`" ]]; then
+    ARCH="x86"
+elif [ $ARCH != "x86_64" ]; then
+    err "My sincerest apologies. I do not know how to deal with your computer's architecture."
+fi
+
+if [[ "`uname -s`" = "Darwin" ]]; then
+    ARCH="OSX"
+fi
+
+prompt() {
+    if [ -n "${GET_TO_IT}" ]; then
+	return 0
+    fi
+
+    read -r -p "$1 [Y/n] " response
+    response=`echo $response | tr '[:upper:]' '[:lower:]'`
+    [[ $response =~ ^(y|yes)$ ]]
+}
+
+echo "Setting up in $BRIDGE_HOME."
+
+mkdir -p $BRIDGE_HOME/tmp
+
+cd $BRIDGE_HOME
+
+if [ -z "`which rabbitmq-server 2>&1 | grep -P '^/'`" ]; then
+  # Acquire rabbit.
+	RABBIT_DIR="${BRIDGE_HOME}/rabbitmq"
+	GOT_RABBIT="1"
+	curl -L "${RABBIT_URL}${ARCH}.tar.gz" > tmp/rabbitmq.tar.gz
+	tar -xzf tmp/rabbitmq.tar.gz
+	mv rabbitmq-server-* "$RABBIT_DIR";
+	cd $RABBIT_DIR
+        ./bin/post_install.sh
+	cd ..
+fi
+
+if [ -d $BRIDGE_HOME/bridge-server ]; then
+    mv $BRIDGE_HOME/bridge-server $BRIDGE_HOME/bridge-server.old`date +%m%d%H%M%Y.%S`
+fi
+
+echo "Downloading and unpacking Bridge from ${BRIDGE_URL}/${ARCH}."
+curl -L "${BRIDGE_URL}/${ARCH}" > tmp/bridge.tar.gz
+
+tar -xzf tmp/bridge.tar.gz
+if [ $? != "0" ]; then
+    err "tar failed!"
+fi
+
+mv getbridge-bridge-server-* bridge-server
+
+rm -rf tmp
+
+curl -L $POST_INSTALL_URL -o setup.sh
+
+echo "The installation is now complete. Have a good day, and do put in a good word, will you?"
+
+echo -e "\n Run the post-install script via \`sh ~/.bridge/setup.sh\`."
+
+echo "#!/bin/sh" > $BRIDGE_HOME/server
+echo "PAR=\$(cd \${0%/*} && pwd)" >> $BRIDGE_HOME/server
+echo "OLD_LD_LIBRARY_PATH=\$LD_LIBRARY_PATH" >> $BRIDGE_HOME/server
+
+if [[ $GOT_RABBIT != "" ]]; then
+    echo "cd \$PAR/rabbitmq; ./sbin/rabbitmq-server" >> $BRIDGE_HOME/server
+else
+    echo -e "\n To use Bridge, first run the rabbitmq-server:"
+    echo "  Execute \`rabbitmq-server\` (if you want, run it with the -detached flag)."
+fi
+echo "export LD_LIBRARY_PATH=\$PAR/bridge-server/local/lib\${LD_LIBRARY_PATH:+:}\$LD_LIBRARY_PATH" >> $BRIDGE_HOME/server
+echo "\$PAR/bridge-server/bin/server \$1" >> $BRIDGE_HOME/server
+
+echo "export LD_LIBRARY_PATH=\$OLD_LD_LIBRARY_PATH" >> $BRIDGE_HOME/server
+
+chmod +x $BRIDGE_HOME/server
+
+echo -e "\n Then start the bridge server:\n  Execute \`~/.bridge/server start\`"
+
+echo -e "\n To stop the bridge server, simply run \`~/.bridge/server stop\`"
